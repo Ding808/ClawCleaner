@@ -5,17 +5,20 @@ echo "============================================"
 echo "  OpenClaw Cleaner macOS Build Script"
 echo "============================================"
 
-# 检测是否有 pyinstaller
-if ! command -v pyinstaller &> /dev/null; then
+# 检查如何调用 pyinstaller
+if python3 -m pyinstaller --version &> /dev/null; then
+    PYINSTALLER_CMD="python3 -m pyinstaller"
+elif command -v pyinstaller &> /dev/null; then
+    PYINSTALLER_CMD="pyinstaller"
+else
     echo "[ERROR] PyInstaller is not installed."
     echo "Please install it using: python3 -m pip install pyinstaller"
     exit 1
 fi
 
 echo "[1/2] Running PyInstaller..."
-pyinstaller --noconfirm --onedir --windowed --name "OpenClaw_Cleaner" \
-    --target-architecture universal2 \
-    mac_cleaner.py
+# 移除 --target-architecture universal2 以避免因本地 Python 不是 Universal2 架构导致共享库加载失败
+$PYINSTALLER_CMD --noconfirm --onedir --windowed --name "OpenClaw_Cleaner" mac_cleaner.py
 
 echo "[2/2] Moving .app to current directory..."
 cp -R "dist/OpenClaw_Cleaner.app" "./OpenClaw_Cleaner.app"
