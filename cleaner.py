@@ -4,8 +4,17 @@ OpenClaw Cleaner — 一键清理 OpenClaw 所有本地文件、环境变量及 
 
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
-import os, sys, winreg, shutil, re, json, datetime, ctypes, subprocess, threading
+import os, sys, winreg, shutil, re, json, datetime, ctypes, subprocess, threading, stat
 from pathlib import Path
+
+# 设置高 DPI 感知（修复界面模糊）
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────
@@ -278,24 +287,66 @@ class App:
                               command=self._menu_remove)
 
     def _build_api_panel(self, parent):
-        panel = tk.Frame(parent, bg=PANEL, width=262,
+        panel = tk.Frame(parent, bg=PANEL, width=320,
                          highlightthickness=1,
                          highlightbackground="#2a2a3e")
         panel.pack(side="right", fill="y", padx=(12, 0))
         panel.pack_propagate(False)
 
-        tk.Label(panel, text="⚠  发现的 API 密钥",
+        top_frame = tk.Frame(panel, bg=PANEL)
+        top_frame.pack(fill="x", padx=12, pady=(14, 4))
+        tk.Label(top_frame, text="⚠  发现的 API 密钥",
                  bg=PANEL, fg=AMBER, font=UIB
-                 ).pack(padx=12, pady=(14, 4), anchor="w")
+                 ).pack(side="left")
+        tk.Button(top_frame, text="↻ 刷新", bg="#2a2a4e", fg=FG, font=("Segoe UI", 8),
+                  command=self._refresh_api_keys_check, relief="flat", cursor="hand2",
+                  padx=6, pady=2).pack(side="right")
+
         tk.Label(panel,
                  text="删除文件前，请务必到对应\n云端控制台注销以下密钥！",
                  bg=PANEL, fg=DIM, font=("Segoe UI", 9),
-                 justify="left", wraplength=234,
+                 justify="left", wraplength=280,
                  ).pack(padx=12, anchor="w")
         tk.Frame(panel, bg="#2a2a3e", height=1).pack(fill="x", padx=8, pady=8)
 
-        self.key_frame = tk.Frame(panel, bg=PANEL)
-        self.key_frame.pack(fill="both", expand=True, padx=10)
+        canvas_frame = tk.Frame(panel, bg=PANEL)
+        canvas_frame.pack(fill="both", expand=True, padx=2, pady=0)
+        
+        self.api_canvas = tk.Canvas(canvas_frame, bg=PANEL, highlightthickness=0)
+        self.api_scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=self.api_canvas.yview)
+        
+        self.key_frame = tk.Frame(self.api_canvas, bg=PANEL)
+        
+        self.api_canvas.create_window((0, 0), window=self.key_frame, anchor="nw", tags="self.key_frame")
+        self.api_canvas.configure(yscrollcommand=self.api_scrollbar.set)
+        
+        self.api_canvas.pack(side="left", fill="both", expand=True, padx=(8, 0))
+        self.api_scrollbar.pack(side="right", fill="y")
+        
+        self.key_frame.bind("<Configure>", lambda e: self.api_canvas.configure(scrollregion=self.api_canvas.bbox("all")))
+        self.api_canvas.bind("<Configure>", lambda e: self.api_canvas.itemconfig("self.key_frame", width=e.width))
+
+        # 绑定鼠标滚轮
+        def _on_mousewheel(event):
+            try:
+                # 只在需要滚动时滚动（如果没出现滚动条说明内容很少，无需滚动）
+                if self.api_scrollbar.get() == (0.0, 1.0):
+                    return
+                
+                # event.delta > 0 向上滚， yview()[0] 是当前视图的顶部比例
+                if event.delta > 0 and self.api_canvas.yview()[0] <= 0:
+                    return
+                    
+                # event.delta < 0 向下滚， yview()[1] 是当前视图的底部比例
+                if event.delta < 0 and self.api_canvas.yview()[1] >= 1:
+                    return
+                    
+                self.api_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except Exception:
+                pass
+        
+        self.api_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
         tk.Label(self.key_frame,
                  text="尚未扫描\n请先点击「开始扫描」",
                  bg=PANEL, fg=DIM, font=("Segoe UI", 9),
@@ -359,17 +410,21 @@ class App:
 
     # ─── 日志 ────────────────────────────────
     def _log(self, text, tag=""):
-        self.log.configure(state="normal")
-        ts = datetime.datetime.now().strftime("%H:%M:%S")
-        line = f"[{ts}]  {text}\n"
-        self.log.insert("end", line, tag) if tag else self.log.insert("end", line)
-        self.log.configure(state="disabled")
-        self.log.see("end")
+        def update_ui():
+            self.log.configure(state="normal")
+            ts = datetime.datetime.now().strftime("%H:%M:%S")
+            line = f"[{ts}]  {text}\n"
+            self.log.insert("end", line, tag) if tag else self.log.insert("end", line)
+            self.log.configure(state="disabled")
+            self.log.see("end")
+        self.root.after(0, update_ui)
 
     def _log_sep(self):
-        self.log.configure(state="normal")
-        self.log.insert("end", "─" * 68 + "\n", "dim")
-        self.log.configure(state="disabled")
+        def update_ui():
+            self.log.configure(state="normal")
+            self.log.insert("end", "─" * 68 + "\n", "dim")
+            self.log.configure(state="disabled")
+        self.root.after(0, update_ui)
 
     # ─── 扫描 ────────────────────────────────
     def _start_scan(self):
@@ -467,6 +522,8 @@ class App:
 
     def _extract_keys(self, filepath):
         try:
+            if os.path.getsize(filepath) > 1024 * 1024:
+                return
             with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
             if filepath.endswith(".json"):
@@ -474,11 +531,11 @@ class App:
                     for k, v in self._flat(json.loads(content)):
                         ku = k.upper()
                         if any(w in ku for w in ("API_KEY", "TOKEN", "SECRET")):
-                            self._save_key(k, str(v))
+                            self._save_key(k, str(v), filepath, "file")
                 except Exception:
                     pass
             for m in ENV_RE.finditer(content):
-                self._save_key(m.group(1), m.group(3).strip().strip('"').strip("'"))
+                self._save_key(m.group(1), m.group(3).strip().strip('"').strip("'"), filepath, "file")
         except Exception:
             pass
 
@@ -489,11 +546,11 @@ class App:
         else:
             yield prefix, d
 
-    def _save_key(self, name, value):
+    def _save_key(self, name, value, source, t="file"):
         if len(value) < 6:
             return
         masked = value[:6] + "*" * min(len(value) - 6, 20) + "…"
-        self.api_keys[name] = masked
+        self.api_keys[name] = {"masked": masked, "source": source, "type": t}
         self._log(f"  🔑 密钥  {name} = {masked}", "key")
 
     # 环境变量扫描
@@ -522,7 +579,10 @@ class App:
                                 self._log(f"    🌐 {label}  {name} = {str(value)[:80]}", "warn")
                             if name.upper() in [k.upper() for k in KNOWN_KEYS]:
                                 masked = str(value)[:6] + "*" * min(len(str(value))-6, 20) + "…"
-                                self.api_keys[name] = masked
+                                self.api_keys[name] = {
+                                    "masked": masked, "source": label, "type": "env",
+                                    "hive_key": hive, "subkey": sub
+                                }
                                 self._log(f"    🔑 {name} = {masked}", "key")
                         except OSError:
                             break
@@ -789,28 +849,86 @@ class App:
         show_preview(self.root, f"预览：{os.path.basename(path)}", content)
 
     # ─── API 密钥面板 ────────────────────────
+    def _refresh_api_keys_check(self):
+        still_exists = {}
+        for kname, info in list(self.api_keys.items()):
+            t = info["type"]
+            src = info["source"]
+            if t == "file":
+                if os.path.isfile(src):
+                    try:
+                        with open(src, "r", encoding="utf-8", errors="ignore") as f:
+                            content = f.read()
+                        
+                        # 考虑 JSON 嵌套导致的 key 是 a.b.KEY 的情况
+                        search_key = kname.split(".")[-1]
+                        if search_key.upper() in content.upper():
+                            still_exists[kname] = info
+                    except Exception:
+                        pass
+            elif t == "env":
+                try:
+                    with winreg.OpenKey(info["hive_key"], info["subkey"], 0, winreg.KEY_READ) as key:
+                        val, _ = winreg.QueryValueEx(key, kname)
+                        if val:
+                            still_exists[kname] = info
+                except Exception:
+                    pass
+        
+        removed = len(self.api_keys) - len(still_exists)
+        self.api_keys = still_exists
+        self._refresh_api_panel()
+        if removed > 0:
+            messagebox.showinfo("刷新完成", f"已刷新。有 {removed} 个 API 密钥由于文件被删或修改已不复存在。\n\n当前剩余 {len(self.api_keys)} 个残留。")
+        else:
+            messagebox.showinfo("刷新完成", f"已刷新。所有（{len(self.api_keys)} 个） API 密钥仍存在。")
+
     def _refresh_api_panel(self):
         for w in self.key_frame.winfo_children():
             w.destroy()
         if not self.api_keys:
             tk.Label(self.key_frame, text="✅ 未发现 API 密钥残留",
                      bg=PANEL, fg=GREEN, font=UIB).pack(pady=20)
+            self.key_frame.update_idletasks()
+            self.api_canvas.configure(scrollregion=self.api_canvas.bbox("all"))
             return
-        for kname, masked in self.api_keys.items():
-            card = tk.Frame(self.key_frame, bg="#1f1500",
-                            highlightthickness=1, highlightbackground=AMBER)
+
+        def open_src(event, src, t):
+            if t == "file":
+                if os.path.exists(src):
+                    subprocess.Popen(f'explorer /select,"{os.path.normpath(src)}"')
+                else:
+                    messagebox.showerror("未找到", "该文件已不存在。")
+            else:
+                messagebox.showinfo("环境变量", f"该密钥位于环境变量：\n{src}\n\n请在系统或用户环境变量中清理。")
+
+        for kname, info in self.api_keys.items():
+            masked = info["masked"]
+            src = info["source"]
+            t = info["type"]
+            
+            card = tk.Frame(self.key_frame, bg="#1f1500", highlightthickness=1, highlightbackground=AMBER, cursor="hand2")
             card.pack(fill="x", pady=3)
-            tk.Label(card, text=kname, bg="#1f1500", fg=AMBER,
-                     font=("Segoe UI", 8, "bold"), anchor="w"
-                     ).pack(fill="x", padx=8, pady=(5, 0))
-            tk.Label(card, text=masked, bg="#1f1500", fg=FG,
-                     font=("Consolas", 8), anchor="w"
-                     ).pack(fill="x", padx=8, pady=(0, 5))
+            
+            lbl1 = tk.Label(card, text=kname, bg="#1f1500", fg=AMBER, font=("Segoe UI", 8, "bold"), anchor="w", cursor="hand2")
+            lbl1.pack(fill="x", padx=8, pady=(5, 0))
+            lbl2 = tk.Label(card, text=masked, bg="#1f1500", fg=FG, font=("Consolas", 8), anchor="w", cursor="hand2")
+            lbl2.pack(fill="x", padx=8, pady=(0, 5))
+            
+            # 绑定点击事件到各组件
+            handler = lambda e, s=src, t_=t: open_src(e, s, t_)
+            card.bind("<Button-1>", handler)
+            lbl1.bind("<Button-1>", handler)
+            lbl2.bind("<Button-1>", handler)
+
         tk.Frame(self.key_frame, bg="#2a2a3e", height=1).pack(fill="x", pady=(8, 4))
         tk.Label(self.key_frame,
                  text="⚠ 清理前请登录对应平台\n吊销 / 注销以上密钥！",
                  bg=PANEL, fg=RED, font=("Segoe UI", 9, "bold"),
                  justify="center", wraplength=220).pack(pady=(4, 10))
+
+        self.key_frame.update_idletasks()
+        self.api_canvas.configure(scrollregion=self.api_canvas.bbox("all"))
 
     def _scan_done(self):
         self.prog.stop()
@@ -856,6 +974,26 @@ class App:
         self._status.set("正在清理…")
         threading.Thread(target=self._clean_thread, daemon=True).start()
 
+    def _delete_reg_key_tree(self, hive, subkey):
+        try:
+            with winreg.OpenKey(hive, subkey, 0, winreg.KEY_ALL_ACCESS) as key:
+                while True:
+                    try:
+                        sub = winreg.EnumKey(key, 0)
+                        self._delete_reg_key_tree(hive, f"{subkey}\\{sub}")
+                    except OSError:
+                        break
+            winreg.DeleteKey(hive, subkey)
+        except Exception as e:
+            raise e
+
+    def _remove_readonly(self, func, path, exc_info):
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except Exception:
+            pass
+
     def _clean_thread(self):
         self._log_sep()
         self._log("=== 开始执行清理 ===", "info")
@@ -867,7 +1005,7 @@ class App:
                     os.remove(item["path"])
                     self._log(f"  ✅ 删除文件：{item['path']}", "ok")
                 elif t == "dir":
-                    shutil.rmtree(item["path"])
+                    shutil.rmtree(item["path"], onerror=self._remove_readonly)
                     self._log(f"  ✅ 删除目录：{item['path']}", "ok")
                 elif t == "env":
                     with winreg.OpenKey(item["hive_key"], item["subkey"],
@@ -877,7 +1015,7 @@ class App:
                     ctypes.windll.user32.SendMessageTimeoutW(
                         0xFFFF, 0x001A, 0, "Environment", 2, 1000, None)
                 elif t == "reg":
-                    winreg.DeleteKey(item["hive_key"], item["subkey"])
+                    self._delete_reg_key_tree(item["hive_key"], item["subkey"])
                     self._log(f"  ✅ 删除注册表项：{item['subkey']}", "ok")
             except Exception as e:
                 errors.append((item, str(e)))
@@ -901,8 +1039,8 @@ class App:
         ]
         if self.api_keys:
             lines += ["【发现的 API 密钥 — 请立即注销！】", "-" * 40]
-            for k, v in self.api_keys.items():
-                lines.append(f"  {k:40s}  前缀：{v}")
+            for k, info in self.api_keys.items():
+                lines.append(f"  {k:40s}  前缀：{info['masked']}")
             lines += [
                 "", "  常用密钥管理地址：",
                 "  • Google Gemini  →  https://aistudio.google.com/app/apikey",
@@ -974,7 +1112,7 @@ class App:
         name_re = re.compile(r'(open.?claw|claw.?cleaner)', re.IGNORECASE)
         try:
             for name in os.listdir(DSK):
-                if name_re.search(name):
+                if name_re.search(name) and name.lower().endswith(('.lnk', '.exe')):
                     targets.add(os.path.join(DSK, name))
         except Exception:
             pass
