@@ -1,6 +1,6 @@
-﻿# OpenClaw Cleaner / ClawCleaner
+﻿# <img src="icon.png" width="45" align="absmiddle" /> OpenClaw Cleaner / ClawCleaner
 
-![Introduction](9a23e498035a4e99607870185acd3825.png)
+![Introduction](Example.png)
 
 **English** | [中文](#中文)
 
