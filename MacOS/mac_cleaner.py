@@ -917,6 +917,9 @@ class App:
             'rm -f "$0"'
         ]
         sh_path = "/tmp/_clawcleaner_goodbye.sh"
+        try:
+            with open(sh_path, "w") as f: f.write("\n".join(script))
+            os.chmod(sh_path, 0o755)
         except Exception as e:
             messagebox.showerror("错误", f"无法写入自删除脚本：{e}")
             return
