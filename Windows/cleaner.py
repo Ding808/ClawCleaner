@@ -1097,7 +1097,7 @@ class App:
         if not messagebox.askyesno(
             "GoodBye — 卸载 Claw Cleaner",
             "此操作将删除所有 Claw Cleaner 相关的文件和快捷方式，\n"
-            "包括程序本身。\n\n"
+            "如果拉取了完整仓库，整个文件夹也将被一并删除！\n"
             "确定要彻底移除 Claw Cleaner 吗？",
             icon="warning",
         ):
@@ -1108,26 +1108,46 @@ class App:
             else os.path.abspath(__file__)
         )
 
-        targets = {exe_path}
+        files_to_delete = {exe_path}
+        dirs_to_delete = set()
+
+        # 向上级寻找是否处于 ClawCleaner 项目目录下（连同仓库文件夹整包删除）
+        curr = exe_path
+        safe_protected_dirs = {"\\", os.environ.get("SystemDrive", "C:") + "\\", UP, DSK, TMP, os.path.dirname(UP)}
+        for _ in range(4):
+            curr = os.path.dirname(curr)
+            if not curr or curr in safe_protected_dirs or len(curr) <= 3: break
+            if os.path.basename(curr).lower() == "clawcleaner" or (os.path.exists(os.path.join(curr, ".gitignore")) and os.path.exists(os.path.join(curr, "README.md"))):
+                dirs_to_delete.add(curr)
+                files_to_delete.discard(exe_path)
+                break
 
         # Desktop copy placed by build.bat
         desktop_exe = os.path.join(DSK, "OpenClaw Cleaner.exe")
         if os.path.isfile(desktop_exe):
-            targets.add(os.path.normpath(desktop_exe))
+            files_to_delete.add(os.path.normpath(desktop_exe))
 
         # Any .lnk / .exe shortcuts on Desktop that mention claw
         name_re = re.compile(r'(open.?claw|claw.?cleaner)', re.IGNORECASE)
         try:
             for name in os.listdir(DSK):
                 if name_re.search(name) and name.lower().endswith(('.lnk', '.exe')):
-                    targets.add(os.path.join(DSK, name))
+                    files_to_delete.add(os.path.join(DSK, name))
         except Exception:
             pass
 
         # Write self-deleting batch script to TEMP
         bat_lines = ["@echo off", "timeout /t 2 /nobreak > nul"]
-        for t in targets:
-            bat_lines.append(f'del /f /q "{t}" 2>nul')
+        for d in dirs_to_delete:
+            # 极致防线（生成前拦截 + 批处理层二次拦截）防止意外清掉全盘
+            if not d or len(d) <= 3 or d.lower() in [v.lower() for v in safe_protected_dirs]: 
+                continue
+            # 增加基于bat的运行期容错拦截
+            bat_lines.append(f'if "%~d0\\"=="{d}" exit /b')
+            bat_lines.append(f'if "{d}"=="C:\\" exit /b')
+            bat_lines.append(f'rmdir /s /q "{d}" 2>nul')
+        for f in files_to_delete:
+            bat_lines.append(f'del /f /q "{f}" 2>nul')
         bat_lines.append('del /f /q "%~f0"')
 
         bat_path = os.path.join(TMP, "_claw_cleaner_goodbye.bat")

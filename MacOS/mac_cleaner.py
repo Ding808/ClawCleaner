@@ -878,7 +878,7 @@ class App:
         messagebox.showinfo("清理完成", msg)
 
     def _goodbye(self):
-        if not messagebox.askyesno("GoodBye — 卸载应用", "确定要彻底删除 OpenClaw Cleaner 自己吗？\n这是不可逆操作！"): return
+        if not messagebox.askyesno("GoodBye — 卸载应用", "确定要彻底删除 OpenClaw Cleaner 自己吗？\n如果拉取了完整仓库，整个文件夹也将被一并删除！\n这是不可逆操作！"): return
 
         exe_path = os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__)
         if '.app/Contents/MacOS' in exe_path:
@@ -886,11 +886,29 @@ class App:
         else:
             target = exe_path
 
+        # 向上级寻找是否处于 ClawCleaner 项目目录下（以便连同仓库文件夹整包删除）
+        delete_target = target
+        curr = target
+        safe_protected_dirs = {"/", "/Applications", str(Path.home()), os.path.join(str(Path.home()), "Desktop"), os.path.join(str(Path.home()), "Downloads")}
+        for _ in range(4):
+            curr = os.path.dirname(curr)
+            if not curr or curr in safe_protected_dirs: break
+            # 使用特征文件判断这是否是项目根目录
+            if os.path.basename(curr).lower() == "clawcleaner" or os.path.exists(os.path.join(curr, ".gitignore")) and os.path.exists(os.path.join(curr, "README.md")):
+                delete_target = curr
+                break
+
         script = [
             "#!/bin/bash",
             "sleep 1",
-            f"rm -rf \"{target}\"",
-            f"rm -f \"$0\""
+            f'TARGET="{delete_target}"',
+            '# 极其严苛的安全底线检查：防止意外格式化用户根目录/重要文件系统',
+            'if [ -z "$TARGET" ] || [ "$TARGET" = "/" ] || [ "$TARGET" = "$HOME" ] || [ "$TARGET" = "/Applications" ] || [ "$TARGET" = "/System" ] || [ "$TARGET" = "/Library" ] || [ "$TARGET" = "/usr" ]; then',
+            '    echo "Dangerous root operations aborted."',
+            '    exit 1',
+            'fi',
+            'rm -rf "$TARGET"',
+            'rm -f "$0"'
         ]
         sh_path = "/tmp/_clawcleaner_goodbye.sh"
         try:
