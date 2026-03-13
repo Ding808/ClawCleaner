@@ -21,6 +21,7 @@ echo "[1/2] Running PyInstaller..."
 $PYINSTALLER_CMD --noconfirm --onedir --windowed --name "OpenClaw_Cleaner" mac_cleaner.py
 
 echo "[2/2] Moving .app to current directory..."
+rm -rf "./OpenClaw_Cleaner.app"
 cp -R "dist/OpenClaw_Cleaner.app" "./OpenClaw_Cleaner.app"
 
 echo "============================================"

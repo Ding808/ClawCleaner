@@ -21,6 +21,7 @@ def relaunch_as_admin():
     try:
         exe = sys.executable
         if getattr(sys, "frozen", False):
+            exe = os.path.realpath(sys.executable)
             cmd = f"'{exe}'"
         else:
             script_path = os.path.abspath(__file__)
@@ -884,55 +885,158 @@ class App:
         messagebox.showinfo("清理完成", msg)
 
     def _goodbye(self):
-        if not messagebox.askyesno("GoodBye — 卸载应用", "确定要彻底删除 OpenClaw Cleaner 自己吗？\n如果拉取了完整仓库，整个文件夹也将被一并删除！\n这是不可逆操作！"): return
+        if not messagebox.askyesno(
+            "GoodBye — 卸载应用",
+            "确定要彻底删除 OpenClaw Cleaner 自己吗？\n如果拉取了完整仓库，整个文件夹也将被一并删除！\n这是不可逆操作！"
+        ):
+            return
 
-        exe_path = os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__)
-        if '.app/Contents/MacOS' in exe_path:
-            target = exe_path.split('.app/Contents/MacOS')[0] + '.app'
+        exe_path = os.path.realpath(sys.executable if getattr(sys, "frozen", False) else __file__)
+
+        # 统一拿到 app 或脚本本体
+        if ".app/Contents/MacOS/" in exe_path:
+            app_root = exe_path.split(".app/Contents/MacOS/")[0] + ".app"
+            target = app_root
         else:
             target = exe_path
 
-        # 向上级寻找是否处于 ClawCleaner 项目目录下（以便连同仓库文件夹整包删除）
+        # 更稳地判断“是否要删整个项目目录”
+        real_home = os.path.realpath(str(Path.home()))
+        safe_protected_dirs = {
+            "/", "/Applications", "/System", "/Library", "/usr", "/usr/local", "/bin", "/sbin",
+            real_home,
+            os.path.realpath(os.path.join(real_home, "Desktop")),
+            os.path.realpath(os.path.join(real_home, "Downloads")),
+            os.path.realpath(os.path.join(real_home, "Documents")),
+        }
+
+        def is_owned_dir(path: str) -> bool:
+            if not os.path.isdir(path):
+                return False
+
+            base = os.path.basename(path).lower()
+
+            # 1. 匹配仓库特征（无论外界文件夹叫什么，只要里面有 MacOS/mac_cleaner.py 就是根）
+            if os.path.isfile(os.path.join(path, "MacOS", "mac_cleaner.py")) or \
+               os.path.isfile(os.path.join(path, "Windows", "cleaner.py")):
+                return True
+            
+            # 2. 我们自己的结构层次名称
+            if base in ("macos", "windows", "dist", "build"):
+                return True
+
+            # 3. 项目名字包含特征
+            if "clawcleaner" in base or "openclaw" in base:
+                return True
+
+            return False
+
+        # 向上寻找项目根目录（最多向上找 5 层）
+        # 删除目标不仅包括 .app 或 .py，还要连同它外层的 ClawCleaner、MacOS 等目录一起拔除。
         delete_target = target
         curr = target
-        safe_protected_dirs = {"/", "/Applications", str(Path.home()), os.path.join(str(Path.home()), "Desktop"), os.path.join(str(Path.home()), "Downloads")}
-        for _ in range(4):
-            curr = os.path.dirname(curr)
-            if not curr or curr in safe_protected_dirs: break
-            # 使用特征文件判断这是否是项目根目录
-            if os.path.basename(curr).lower() == "clawcleaner" or (os.path.exists(os.path.join(curr, ".gitignore")) and os.path.exists(os.path.join(curr, "README.md"))):
-                delete_target = curr
-                break
 
-        script = [
-            "#!/bin/bash",
-            "sleep 2", # 等待软件彻底退出并解锁目录
-            f'TARGET="{delete_target}"',
-            '# 极其严苛的安全底线检查：防止意外格式化用户根目录/重要文件系统',
-            'if [ -z "$TARGET" ] || [ "$TARGET" = "/" ] || [ "$TARGET" = "$HOME" ] || [ "$TARGET" = "/Applications" ] || [ "$TARGET" = "/System" ] || [ "$TARGET" = "/Library" ] || [ "$TARGET" = "/usr" ]; then',
-            '    echo "Dangerous root operations aborted."',
-            '    exit 1',
-            'fi',
-            'rm -rf "$TARGET"',
-            'rm -f "$0"'
-        ]
-        sh_path = "/tmp/_clawcleaner_goodbye.sh"
+        for _ in range(5):
+            parent = os.path.dirname(curr)
+            if not parent or os.path.realpath(parent) in safe_protected_dirs or len(parent) <= 1:
+                break
+            
+            if is_owned_dir(parent):
+                delete_target = parent
+                
+            curr = parent
+
+        self.root.withdraw()
+        self.root.update_idletasks()
+
+        import tempfile
+        import time
+        current_pid = os.getpid()
+
+        # 生成一个独立卸载脚本到 /tmp，避免当前进程直接删自己父目录
+        uninstall_sh = f"/tmp/openclaw_cleaner_uninstall_{current_pid}.sh"
+        
+        # staging 目录放到 /tmp，避免原地删不干净
+        staging_name = f"openclaw_delete_{current_pid}_{int(time.time())}"
+        staging_target = os.path.join(tempfile.gettempdir(), staging_name)
+
+        def sh_quote(s: str) -> str:
+            return "'" + s.replace("'", "'\"'\"'") + "'"
+
+        q_delete_target = sh_quote(delete_target)
+        q_staging_target = sh_quote(staging_target)
+
+        script = f"""#!/bin/sh
+set -eu
+
+TARGET={q_delete_target}
+STAGING={q_staging_target}
+PID={current_pid}
+
+cd /
+
+# 最多等 30 秒，确保主进程和 GUI 资源都释放
+i=0
+while kill -0 "$PID" 2>/dev/null; do
+  sleep 1
+  i=$((i+1))
+  if [ "$i" -ge 30 ]; then
+    break
+  fi
+done
+
+# 再补一点缓冲
+sleep 2
+
+# 先尝试移动到 /tmp，再删除
+if [ -e "$TARGET" ]; then
+  rm -rf "$STAGING" 2>/dev/null || true
+
+  # 可能第一次 move 还失败，多试几次
+  moved=0
+  j=0
+  while [ "$j" -lt 10 ]; do
+    if mv "$TARGET" "$STAGING" 2>/dev/null; then
+      moved=1
+      break
+    fi
+    sleep 1
+    j=$((j+1))
+  done
+
+  if [ "$moved" -eq 1 ]; then
+    rm -rf "$STAGING" 2>/dev/null || true
+  else
+    # move 实在不行，再强删一次
+    rm -rf "$TARGET" 2>/dev/null || true
+    sleep 2
+    rm -rf "$TARGET" 2>/dev/null || true
+  fi
+fi
+
+rm -f "$0"
+"""
+
         try:
-            with open(sh_path, "w") as f: f.write("\n".join(script))
-            os.chmod(sh_path, 0o755)
+            with open(uninstall_sh, "w", encoding="utf-8") as f:
+                f.write(script)
+            os.chmod(uninstall_sh, 0o700)
+
+            subprocess.Popen(
+                ["/bin/sh", uninstall_sh],
+                cwd="/",
+                close_fds=True,
+                start_new_session=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         except Exception as e:
-            messagebox.showerror("错误", f"无法写入自删除脚本：{e}")
+            messagebox.showerror("卸载失败", f"无法启动卸载脚本：{e}")
+            self.root.deiconify()
             return
-            
-        try:
-            # 不使用 nohup 避免某些 macOS 环境限制，直接启动独立的后继 bash 进程
-            subprocess.Popen(["/bin/bash", sh_path], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            
-            # 使用 os._exit(0) 不经过任何捕获立刻自尽进程。若沿用 sys.exit 在 Tkinter 里面可能会偶发卡死导致进程未杀死。
-            import os
-            os._exit(0)
-        except Exception as e:
-            messagebox.showerror("错误", f"自删除时无法启动 Shell：{e}")
+
+        os._exit(0)
 
 if __name__ == "__main__":
     if not is_admin():
