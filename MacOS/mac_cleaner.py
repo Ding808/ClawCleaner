@@ -19,14 +19,20 @@ def is_admin():
 
 def relaunch_as_admin():
     try:
+        exe = sys.executable
         if getattr(sys, "frozen", False):
-            cmd = f'\\"{sys.executable}\\"'
+            cmd = f"'{exe}'"
         else:
-            cmd = f'\\"{sys.executable}\\" \\"{os.path.abspath(__file__)}\\"'
+            script_path = os.path.abspath(__file__)
+            cmd = f"'{exe}' '{script_path}'"
             
-        apple_script = f'do shell script "{cmd}" with prompt "OpenClaw Cleaner 申请获取管理员权限以进行深层残留垃圾清理。" with administrator privileges'
-        subprocess.run(["osascript", "-e", apple_script], check=True)
-        sys.exit(0)
+        # 利用后台执行（&）释放命令，不挂起进程，避免出现两个视窗。
+        apple_script = f'do shell script "{cmd} >/dev/null 2>&1 &" with prompt "OpenClaw Cleaner 申请获取管理员运行权限以进行彻底清理。" with administrator privileges'
+        subprocess.Popen(["osascript", "-e", apple_script])
+        
+        # 立即强制结束老的不带权限的原始进程，防止“两个软件”同时打开的现象
+        import os
+        os._exit(0)
     except Exception:
         # 用户取消或授权失败，按普通模式运行
         pass
@@ -894,13 +900,13 @@ class App:
             curr = os.path.dirname(curr)
             if not curr or curr in safe_protected_dirs: break
             # 使用特征文件判断这是否是项目根目录
-            if os.path.basename(curr).lower() == "clawcleaner" or os.path.exists(os.path.join(curr, ".gitignore")) and os.path.exists(os.path.join(curr, "README.md")):
+            if os.path.basename(curr).lower() == "clawcleaner" or (os.path.exists(os.path.join(curr, ".gitignore")) and os.path.exists(os.path.join(curr, "README.md"))):
                 delete_target = curr
                 break
 
         script = [
             "#!/bin/bash",
-            "sleep 1",
+            "sleep 2", # 等待软件彻底退出并解锁目录
             f'TARGET="{delete_target}"',
             '# 极其严苛的安全底线检查：防止意外格式化用户根目录/重要文件系统',
             'if [ -z "$TARGET" ] || [ "$TARGET" = "/" ] || [ "$TARGET" = "$HOME" ] || [ "$TARGET" = "/Applications" ] || [ "$TARGET" = "/System" ] || [ "$TARGET" = "/Library" ] || [ "$TARGET" = "/usr" ]; then',
@@ -911,14 +917,19 @@ class App:
             'rm -f "$0"'
         ]
         sh_path = "/tmp/_clawcleaner_goodbye.sh"
-        try:
-            with open(sh_path, "w") as f: f.write("\n".join(script))
-            os.chmod(sh_path, 0o755)
-            # macOS nohup bg process to delete after we exit
-            subprocess.Popen(["nohup", sh_path], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            sys.exit(0)
         except Exception as e:
-            messagebox.showerror("错误", f"无法执行自删除脚本：{e}")
+            messagebox.showerror("错误", f"无法写入自删除脚本：{e}")
+            return
+            
+        try:
+            # 不使用 nohup 避免某些 macOS 环境限制，直接启动独立的后继 bash 进程
+            subprocess.Popen(["/bin/bash", sh_path], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # 使用 os._exit(0) 不经过任何捕获立刻自尽进程。若沿用 sys.exit 在 Tkinter 里面可能会偶发卡死导致进程未杀死。
+            import os
+            os._exit(0)
+        except Exception as e:
+            messagebox.showerror("错误", f"自删除时无法启动 Shell：{e}")
 
 if __name__ == "__main__":
     if not is_admin():
