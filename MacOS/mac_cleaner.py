@@ -414,6 +414,17 @@ class App:
 
     def _scan_files(self):
         seen = set()
+        
+        # 补充：macOS 下常见的含前缀(如 com.xx.openclaw)的目录配置
+        extended_dirs = [
+            os.path.join(HOME, "Library", "Application Support"),
+            os.path.join(HOME, "Library", "Preferences"),
+            os.path.join(HOME, "Library", "Caches"),
+            os.path.join(HOME, "Library", "Saved Application State"),
+            os.path.join(HOME, "Library", "Logs"),
+        ]
+        
+        # 1. 扫描固定明确的目录（如 ~/.claude, ~/.openclaw 等）
         for base in SCAN_DIRS:
             base = os.path.normpath(base)
             if base in seen or not os.path.exists(base):
@@ -425,8 +436,15 @@ class App:
                     for name in dirs + files:
                         full = os.path.join(root_dir, name)
                         is_claw = is_claw_base or CLAW_RE.search(name) is not None
-                        if not is_claw and base == os.path.join(HOME, ".claude"):
-                            is_claw = self._has_claw_content(full)
+                        
+                        # 风险修复：如果只是文件中含有 openclaw (如全局 config 文件)
+                        # 直接删除整个文件会误杀其他环境变量，因此这里只提取 API Key 不做整文件删除。
+                        if not is_claw and base == os.path.join(HOME, ".claude") and self._has_claw_content(full):
+                            self._log(f"  ⚠ 发现内容含 OpenClaw，建议手动检查：{full}", "warn")
+                            if self._is_config(name):
+                                self._extract_keys(full)
+                            continue
+
                         if is_claw:
                             kind = "dir" if os.path.isdir(full) else "file"
                             self.items.append({"type": kind, "path": full})
@@ -435,6 +453,21 @@ class App:
                                 self._extract_keys(full)
             except PermissionError:
                 self._log(f"  ⛔ 无权限：{base}", "err")
+
+        # 2. 扫描父级目录下的匹配项（不深度递归遍历所有其他应用的文件夹，只查第一层）
+        for parent in extended_dirs:
+            if not os.path.isdir(parent): continue
+            try:
+                for name in os.listdir(parent):
+                    if CLAW_RE.search(name):
+                        full = os.path.join(parent, name)
+                        if full in seen: continue
+                        seen.add(full)
+                        kind = "dir" if os.path.isdir(full) else "file"
+                        self.items.append({"type": kind, "path": full})
+                        self._log(f"  {'📁' if kind=='dir' else '📄'} {full}", "warn")
+            except PermissionError:
+                pass
 
         # TMP 目录单独扫名称
         if os.path.isdir(TMP):
@@ -508,11 +541,10 @@ class App:
                     found = False
                     if CLAW_RE.search(line):
                         found = True
-                    else:
-                        for k in KNOWN_KEYS:
-                            if k in line:
-                                found = True
-                                break
+                    # 风险修复：不再强杀其它所有知名 API_KEY，只干掉 OpenClaw 相关的
+                    elif "OPENCLAW" in line.upper(): 
+                        found = True
+
                     if found:
                         bad_lines.append((idx, line))
                         self._log(f"    🌐 {p} -> {line.strip()[:60]}...", "warn")
@@ -523,8 +555,7 @@ class App:
                             if len(parts) == 2:
                                 kname = parts[0].strip()
                                 kraw = parts[1].strip("'\"")
-                                if any(wk in kname for wk in KNOWN_KEYS):
-                                    self._save_key(kname, kraw, path, "env")
+                                self._save_key(kname, kraw, path, "env")
 
                 if bad_lines:
                     self.items.append({
