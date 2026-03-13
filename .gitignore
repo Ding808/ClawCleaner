@@ -3,6 +3,10 @@ build/
 dist/
 *.spec
 
+# macOS App Bundles (push the .zip instead)
+*.app/
+*.dmg
+
 # Python cache
 __pycache__/
 *.py[cod]

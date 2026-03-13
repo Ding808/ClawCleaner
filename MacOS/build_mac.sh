@@ -20,11 +20,16 @@ echo "[1/2] Running PyInstaller..."
 # 移除 --target-architecture universal2 以避免因本地 Python 不是 Universal2 架构导致共享库加载失败
 $PYINSTALLER_CMD --noconfirm --onedir --windowed --name "OpenClaw_Cleaner" mac_cleaner.py
 
-echo "[2/2] Moving .app to current directory..."
+echo "[2/3] Moving .app to current directory..."
 rm -rf "./OpenClaw_Cleaner.app"
 cp -R "dist/OpenClaw_Cleaner.app" "./OpenClaw_Cleaner.app"
 
+echo "[3/3] Creating zip archive for Git/Distribution..."
+rm -f "./OpenClaw_Cleaner_macOS.zip"
+ditto -c -k --sequesterRsrc --keepParent "./OpenClaw_Cleaner.app" "./OpenClaw_Cleaner_macOS.zip"
+
 echo "============================================"
 echo "  Build successful! "
-echo "  Look for OpenClaw_Cleaner.app in this folder."
+echo "  Look for OpenClaw_Cleaner_macOS.zip in this folder."
+echo "  (Please push the .zip file to GitHub, NOT the .app folder)"
 echo "============================================"
