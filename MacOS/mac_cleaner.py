@@ -17,6 +17,20 @@ def is_admin():
     except AttributeError:
         return False
 
+def relaunch_as_admin():
+    try:
+        if getattr(sys, "frozen", False):
+            cmd = f'\\"{sys.executable}\\"'
+        else:
+            cmd = f'\\"{sys.executable}\\" \\"{os.path.abspath(__file__)}\\"'
+            
+        apple_script = f'do shell script "{cmd}" with prompt "OpenClaw Cleaner 申请获取管理员权限以进行深层残留垃圾清理。" with administrator privileges'
+        subprocess.run(["osascript", "-e", apple_script], check=True)
+        sys.exit(0)
+    except Exception:
+        # 用户取消或授权失败，按普通模式运行
+        pass
+
 # ─────────────────────────────────────────────
 #  常量
 # ─────────────────────────────────────────────
@@ -89,8 +103,8 @@ def show_preview(parent, title, content):
     tk.Label(bar, text=title, bg=PANEL, fg=FG, font=UIB,
              anchor="w").pack(side="left", padx=12, pady=8)
     tk.Button(bar, text="关闭", command=w.destroy,
-              bg=RED, fg="white", font=UIB, relief="flat",
-              padx=12, pady=4, cursor="hand2").pack(side="right", padx=10, pady=6)
+              bg=RED, fg="black", font=UIB, relief="flat", highlightbackground=PANEL,
+              padx=12, pady=4).pack(side="right", padx=10, pady=6)
 
     txt = scrolledtext.ScrolledText(w, bg="#0b0b14", fg=FG, font=MONO,
                                     wrap="none", state="normal",
@@ -252,8 +266,8 @@ class App:
         tk.Label(top_frame, text="⚠  发现的 API 密钥",
                  bg=PANEL, fg=AMBER, font=UIB
                  ).pack(side="left")
-        tk.Button(top_frame, text="↻ 刷新", bg="#2a2a4e", fg=FG, font=("-apple-system", 11),
-                  command=self._refresh_api_keys_check, relief="flat", cursor="hand2",
+        tk.Button(top_frame, text="↻ 刷新", bg="#2a2a4e", fg="black", font=("-apple-system", 11), highlightbackground=PANEL,
+                  command=self._refresh_api_keys_check, relief="flat",
                   padx=6, pady=2).pack(side="right")
 
         tk.Label(panel,
@@ -314,34 +328,34 @@ class App:
 
         tk.Button(
             bar, text="GoodBye 👋", command=self._goodbye,
-            bg="#2a1a1a", fg="#cc4444", font=UIB, relief="flat",
-            padx=12, pady=7, cursor="hand2",
+            bg="#2a1a1a", fg="black", font=UIB, relief="flat", highlightbackground=BG,
+            padx=12, pady=7,
         ).pack(side="left", padx=(14, 0))
 
         self.btn_clean = tk.Button(
             bar, text="清理并删除  🗑", command=self._start_clean,
-            bg="#8b0000", fg="white", font=UIB, relief="flat",
-            padx=16, pady=7, cursor="hand2", state="disabled",
+            bg="#8b0000", fg="black", font=UIB, relief="flat", highlightbackground=BG,
+            padx=16, pady=7, state="disabled",
         )
         self.btn_clean.pack(side="right", padx=(6, 0))
 
         self.btn_scan = tk.Button(
             bar, text="开始扫描  🔍", command=self._start_scan,
-            bg=RED, fg="white", font=UIB, relief="flat",
-            padx=16, pady=7, cursor="hand2",
+            bg=RED, fg="black", font=UIB, relief="flat", highlightbackground=BG,
+            padx=16, pady=7,
         )
         self.btn_scan.pack(side="right", padx=(6, 0))
 
         tk.Button(
             bar, text="☑ 全选", command=self._select_all,
-            bg="#2a2a4e", fg=FG, font=UI, relief="flat",
-            padx=10, pady=7, cursor="hand2",
+            bg="#2a2a4e", fg="black", font=UI, relief="flat", highlightbackground=BG,
+            padx=10, pady=7,
         ).pack(side="right", padx=(6, 0))
 
         tk.Button(
             bar, text="☐ 跳过所选", command=self._skip_selected,
-            bg="#2a2a4e", fg=AMBER, font=UI, relief="flat",
-            padx=10, pady=7, cursor="hand2",
+            bg="#2a2a4e", fg="black", font=UI, relief="flat", highlightbackground=BG,
+            padx=10, pady=7,
         ).pack(side="right", padx=(0, 0))
 
     def _style(self):
@@ -889,4 +903,6 @@ class App:
             messagebox.showerror("错误", f"无法执行自删除脚本：{e}")
 
 if __name__ == "__main__":
+    if not is_admin():
+        relaunch_as_admin()
     App().root.mainloop()
