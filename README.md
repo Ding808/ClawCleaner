@@ -1,6 +1,10 @@
-﻿# <img src="icon.png" width="45" align="absmiddle" /> OpenClaw Cleaner / ClawCleaner
+﻿# 🦞 💀 OpenClaw Cleaner / ClawCleaner
 
-![Introduction](Example.png)
+<p align="center">
+  <img src="icon.png" width="300" alt="Icon" />
+</p>
+
+![Introduction](9a23e498035a4e99607870185acd3825.png)
 
 **English** | [中文](#中文)
 
@@ -139,3 +143,5 @@ ClawCleaner/
 > **⚠️ 重要提示 / Important**
 > API keys found during scanning are **not** automatically revoked — you must manually invalidate them on the respective platform's dashboard before deleting the files. 
 > 在扫描过程中发现的 API 密钥**不会**被自动注销。在删除这些文件之前，强烈建议您手动登录对应的大模型平台控制台将这些密钥作废，以免造成安全隐患。
+
+
