@@ -1137,17 +1137,23 @@ class App:
             pass
 
         # Write self-deleting batch script to TEMP
-        bat_lines = ["@echo off", "timeout /t 2 /nobreak > nul"]
+        bat_lines = ["@echo off", ":loop", "timeout /t 1 /nobreak > nul"]
+        for f in files_to_delete:
+            bat_lines.append(f'del /f /q "{f}" 2>nul')
+            
         for d in dirs_to_delete:
             # 极致防线（生成前拦截 + 批处理层二次拦截）防止意外清掉全盘
             if not d or len(d) <= 3 or d.lower() in [v.lower() for v in safe_protected_dirs]: 
                 continue
             # 增加基于bat的运行期容错拦截
             bat_lines.append(f'if "%~d0\\"=="{d}" exit /b')
-            bat_lines.append(f'if "{d}"=="C:\\" exit /b')
+            bat_lines.append(f'if /i "{d}"=="C:\\" exit /b')
             bat_lines.append(f'rmdir /s /q "{d}" 2>nul')
+            bat_lines.append(f'if exist "{d}" goto loop')
+            
         for f in files_to_delete:
-            bat_lines.append(f'del /f /q "{f}" 2>nul')
+            bat_lines.append(f'if exist "{f}" goto loop')
+            
         bat_lines.append('del /f /q "%~f0"')
 
         bat_path = os.path.join(TMP, "_claw_cleaner_goodbye.bat")
@@ -1156,6 +1162,7 @@ class App:
                 f.write("\n".join(bat_lines))
             subprocess.Popen(
                 ["cmd", "/c", bat_path],
+                cwd=TMP,
                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
                 close_fds=True,
             )
